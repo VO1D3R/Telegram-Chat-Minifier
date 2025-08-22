@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Chat Minifier Pro</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="container">
+    <h1>Telegram Chat Minifier Pro</h1>
+
+    <fieldset>
+        <legend>1. Файл</legend>
+        <input type="file" id="jsonFile" accept=".json">
+        <div id="status">Загрузите файл для начала работы.</div>
+    </fieldset>
+
+    <div id="controls" class="hidden">
+        <fieldset>
+            <legend>2. Фильтры</legend>
+            <div class="options-grid">
+                 <div class="control-group">
+                    <label>Режим</label>
+                    <select id="modeSelect">
+                        <option value="user" selected>Фильтр по пользователю (пользователям)</option>
+                        <option value="all">Форматировать весь чат</option>
+                    </select>
+                </div>
+                 <div class="control-group">
+                    <label for="timeWindow">Окно вокруг сообщений (мин)</label>
+                    <input type="number" id="timeWindow" value="30" min="1">
+                </div>
+            </div>
+            <div class="options-grid" style="margin-top: 20px;">
+                <div class="control-group">
+                    <label for="dateFrom">Дата и время С</label>
+                    <input type="datetime-local" id="dateFrom">
+                </div>
+                <div class="control-group">
+                    <label for="dateTo">Дата и время ПО</label>
+                    <input type="datetime-local" id="dateTo">
+                </div>
+            </div>
+            <div id="userSelectionGroup" class="control-group" style="margin-top: 20px;">
+                <label for="userSearch">Пользователи (выберите одного или нескольких)</label>
+                <input type="text" id="userSearch" placeholder="Поиск по имени...">
+                <div id="userList"></div>
+            </div>
+        </fieldset>
+
+        <fieldset>
+            <legend>3. Опции форматирования</legend>
+            <div class="options-grid">
+                <label class="checkbox-label"><input type="checkbox" id="showReply" checked> Пометка > reply</label>
+                <label class="checkbox-label"><input type="checkbox" id="hideLinks"> Прятать ссылки</label>
+                <label class="checkbox-label"><input type="checkbox" id="anonymizeNames"> Анонимизировать имена</label>
+                <label class="checkbox-label"><input type="checkbox" id="includeService"> Включать сервисные сообщения</label>
+                <label class="checkbox-label"><input type="checkbox" id="showForwards"> Показывать "Переслано от"</label>
+            </div>
+        </fieldset>
+        
+        <div class="button-group">
+            <button id="processBtn" disabled>Обработать</button>
+            <button id="downloadBtn" disabled>Скачать TXT</button>
+        </div>
+
+        <fieldset>
+            <legend>4. Результат</legend>
+             <textarea id="outputPreview" readonly placeholder="Здесь будет результат..."></textarea>
+             <div id="outputStats" style="margin-top: 10px; text-align: right; color: var(--text-secondary);"></div>
+        </fieldset>
+    </div>
+</div>
+
+<script src="js/script.js"></script>
+</body>
+</html>
