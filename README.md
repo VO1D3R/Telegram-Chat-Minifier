@@ -1,7 +1,7 @@
 <details>
 <summary><strong>English Version</strong></summary>
 
-# Telegram Chat Minifier Pro
+# Telegram Chat Minifier
 
 This tool is designed to solve a major problem when working with large Telegram chat archives: their huge size and unsuitability for AI analysis (e.g., for models like GPT, Claude, Llama).
 
@@ -15,7 +15,7 @@ A standard Telegram chat export in `.json` format contains a lot of redundant in
 
 ## ✨ Features
 
-`Telegram Chat Minifier Pro` solves these problems by allowing you to:
+`Telegram Chat Minifier` solves these problems by allowing you to:
 
 - **Filter by User(s):** Select one or more participants to extract only relevant dialogues.
 - **Set a Time Window:** Get not only the messages of the selected people but also the context—responses from other participants within a few minutes before and after.
