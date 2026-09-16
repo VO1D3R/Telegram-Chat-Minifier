@@ -1,84 +1,126 @@
-// js/app.js
-document.addEventListener('DOMContentLoaded', () => {
+/* ============================================================================
+ * js/app.js — интерфейс Telegram Chat Minifier 2.0
+ * ----------------------------------------------------------------------------
+ * Здесь ТОЛЬКО UI: события, состояние экрана, форматирование статистики.
+ * Вся логика сжатия — в js/core.js и выполняется в Web Worker.
+ *
+ * Воркер создаётся из исходника ядра (toString → Blob), поэтому приложение
+ * работает с file:// без сети, сборки и полифиллов.
+ * ========================================================================== */
+(() => {
     'use strict';
 
-    const $ = id => document.getElementById(id);
+    const $ = (id) => document.getElementById(id);
 
     const dom = {
-        dropZone: $('dropZone'),
-        fileInput: $('fileInput'),
-        browseBtn: $('browseBtn'),
-        loadProgress: $('loadProgress'),
-        loadBar: $('loadBar'),
-        loadPct: $('loadPct'),
-        statusBar: $('statusBar'),
-        statusIcon: $('statusIcon'),
-        statusText: $('statusText'),
-        chatInfo: $('chatInfo'),
-        infoName: $('infoName'),
-        infoType: $('infoType'),
-        infoCount: $('infoCount'),
-        infoUsers: $('infoUsers'),
-        infoPeriod: $('infoPeriod'),
-        controls: $('mainControls'),
-        scopeMode: $('scopeMode'),
-        windowField: $('windowField'),
-        windowMinutes: $('windowMinutes'),
-        dateFrom: $('dateFrom'),
-        dateTo: $('dateTo'),
-        userPicker: $('userPicker'),
-        userSearch: $('userSearch'),
-        userList: $('userList'),
-        selectedCount: $('selectedCount'),
-        processBtn: $('processBtn'),
-        processSpinner: $('processSpinner'),
-        resultSection: $('resultSection'),
-        resultStats: $('resultStats'),
-        resultPreview: $('resultPreview'),
-        copyBtn: $('copyBtn'),
-        downloadBtn: $('downloadBtn'),
+        dropZone: $('dropZone'), fileInput: $('fileInput'), browseBtn: $('browseBtn'),
+        loadProgress: $('loadProgress'), loadBar: $('loadBar'), loadPct: $('loadPct'),
+        statusBar: $('statusBar'), statusIcon: $('statusIcon'), statusText: $('statusText'),
+        chatInfo: $('chatInfo'), infoName: $('infoName'), infoType: $('infoType'),
+        infoCount: $('infoCount'), infoUsers: $('infoUsers'), infoPeriod: $('infoPeriod'),
+        controls: $('mainControls'), scopeMode: $('scopeMode'), windowField: $('windowField'),
+        windowMinutes: $('windowMinutes'), dateFrom: $('dateFrom'), dateTo: $('dateTo'),
+        userPicker: $('userPicker'), userSearch: $('userSearch'), userList: $('userList'),
+        selectedCount: $('selectedCount'), processBtn: $('processBtn'), processSpinner: $('processSpinner'),
+        resultSection: $('resultSection'), resultStats: $('resultStats'),
+        resultPreview: $('resultPreview'), copyBtn: $('copyBtn'), downloadBtn: $('downloadBtn'),
         shortLenField: $('shortLenField'),
     };
 
-    const toggleIds = [
-        'fHideLinks', 'fMergeAlbums', 'fFlattenNewlines', 'fOmitSingleAuthor',
-        'fShowReply', 'fShowForwards', 'fAnonymize', 'fStripEmoji',
-        'fStripStickers', 'fStripMediaNoText', 'fStripForwards', 'fStripShort', 'fShortLen'
+    const TOGGLE_IDS = [
+        'fHideLinks', 'fMergeAlbums', 'fGroupRepeats', 'fFlattenNewlines', 'fOmitSingleAuthor',
+        'fShowReply', 'fShowForwards', 'fShowService', 'fAnonymize', 'fStripEmoji',
+        'fStripStickers', 'fStripMediaNoText', 'fStripForwards', 'fStripShort',
     ];
     const tog = {};
-    toggleIds.forEach(id => tog[id] = $(id));
+    for (const id of TOGGLE_IDS) tog[id] = $(id);
+    tog.fShortLen = $('fShortLen');
 
-    let state = {
-        meta: null,
-        users: [],
-        selected: new Set(),
+    const state = {
+        meta: null,          // {chatName, chatType, total, users, minTs, maxTs, sourceChars,...}
+        selected: new Set(), // fromId выбранных участников
         resultText: null,
         fileName: 'minified.txt',
-        chatName: '',
+        busy: false,
     };
 
-    // ═══════════════════════════════════════
-    // PRESETS
-    // ═══════════════════════════════════════
+    // ── доступ к ядру в главном потоке (для токенов/имен файлов) ──
+    const coreBox = {};
+    globalThis.tgminWorkerCore(coreBox);
+    const core = coreBox.__tgmin;
+
+    // ══════════════════════════════════════════
+    // WEB WORKER
+    // ══════════════════════════════════════════
+    function createWorker() {
+        if (typeof globalThis.tgminWorkerCore !== 'function') {
+            throw new Error('Ядро не загружено — проверьте, что js/core.js подключён до js/app.js');
+        }
+        const src = globalThis.tgminWorkerCore.toString() + '\n;tgminWorkerCore(self);';
+        const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+        const worker = new Worker(url);
+        // URL больше не нужен, но отзывать сразу нельзя: воркер мог не успеть загрузиться
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+        return worker;
+    }
+
+    const worker = createWorker();
+
+    worker.onerror = (e) => {
+        setBusy(false);
+        showLoadProgress(false);
+        setStatus('error', 'Ошибка воркера: ' + (e.message || 'неизвестная'));
+    };
+
+    worker.onmessage = ({ data }) => {
+        switch (data.type) {
+            case 'progress': {
+                const label =
+                    data.phase === 'read' ? 'Чтение файла…' :
+                    data.phase === 'parse' ? 'Парсинг JSON…' :
+                    data.phase === 'index' ? 'Индексация…' : 'Готово';
+                showLoadProgress(true, data.pct, label);
+                break;
+            }
+            case 'loaded':
+                setBusy(false);
+                showLoadProgress(false);
+                onLoaded(data.meta);
+                break;
+            case 'result':
+                setBusy(false);
+                onResult(data.text);
+                break;
+            case 'error':
+                setBusy(false);
+                showLoadProgress(false);
+                setStatus('error', 'Ошибка: ' + data.text);
+                break;
+        }
+    };
+
+    // ══════════════════════════════════════════
+    // ПРЕСЕТЫ
+    // ══════════════════════════════════════════
     const PRESETS = {
         safe: {
-            fHideLinks: false, fMergeAlbums: false, fFlattenNewlines: false,
-            fOmitSingleAuthor: false, fShowReply: true, fShowForwards: true,
-            fAnonymize: false, fStripEmoji: false, fStripStickers: false,
-            fStripMediaNoText: false, fStripForwards: false, fStripShort: false
+            fHideLinks: false, fMergeAlbums: false, fGroupRepeats: false, fFlattenNewlines: false,
+            fOmitSingleAuthor: false, fShowReply: true, fShowForwards: true, fShowService: false,
+            fAnonymize: false, fStripEmoji: false, fStripStickers: false, fStripMediaNoText: false,
+            fStripForwards: false, fStripShort: false,
         },
         balanced: {
-            fHideLinks: true, fMergeAlbums: true, fFlattenNewlines: true,
-            fOmitSingleAuthor: true, fShowReply: true, fShowForwards: false,
-            fAnonymize: false, fStripEmoji: false, fStripStickers: false,
-            fStripMediaNoText: true, fStripForwards: false, fStripShort: false
+            fHideLinks: true, fMergeAlbums: true, fGroupRepeats: false, fFlattenNewlines: true,
+            fOmitSingleAuthor: true, fShowReply: true, fShowForwards: true, fShowService: false,
+            fAnonymize: false, fStripEmoji: false, fStripStickers: true, fStripMediaNoText: true,
+            fStripForwards: false, fStripShort: false,
         },
         aggressive: {
-            fHideLinks: true, fMergeAlbums: true, fFlattenNewlines: true,
-            fOmitSingleAuthor: true, fShowReply: true, fShowForwards: false,
-            fAnonymize: false, fStripEmoji: true, fStripStickers: true,
-            fStripMediaNoText: true, fStripForwards: true, fStripShort: true
-        }
+            fHideLinks: true, fMergeAlbums: true, fGroupRepeats: true, fFlattenNewlines: true,
+            fOmitSingleAuthor: true, fShowReply: true, fShowForwards: false, fShowService: false,
+            fAnonymize: false, fStripEmoji: true, fStripStickers: true, fStripMediaNoText: true,
+            fStripForwards: true, fStripShort: true,
+        },
     };
 
     function applyPreset(name) {
@@ -87,689 +129,27 @@ document.addEventListener('DOMContentLoaded', () => {
         for (const [k, v] of Object.entries(p)) {
             if (tog[k] && tog[k].type === 'checkbox') tog[k].checked = v;
         }
-        document.querySelectorAll('.preset').forEach(el => {
+        document.querySelectorAll('.preset').forEach((el) => {
             el.classList.toggle('active', el.dataset.preset === name);
+            el.setAttribute('aria-pressed', String(el.dataset.preset === name));
         });
-        dom.shortLenField.style.display = tog.fStripShort.checked ? 'flex' : 'none';
+        syncShortLenField();
+        syncForwardConflict();
     }
 
-    document.querySelectorAll('.preset').forEach(el => {
-        el.addEventListener('click', () => applyPreset(el.dataset.preset));
-    });
-
-    // ═══════════════════════════════════════
-    // WEB WORKER
-    // ═══════════════════════════════════════
-    const WORKER_CODE = `
-'use strict';
-
-let chatData = null;
-
-self.onmessage = async ({ data }) => {
-    try {
-        if (data.type === 'load') await loadFile(data.file);
-        if (data.type === 'process') processChat(data.config);
-    } catch (err) {
-        self.postMessage({ type: 'error', text: err.message || String(err) });
-    }
-};
-
-async function loadFile(file) {
-    self.postMessage({ type: 'progress', phase: 'read', pct: 0 });
-
-    const text = await file.text();
-    self.postMessage({ type: 'progress', phase: 'parse', pct: 40 });
-
-    let raw;
-    try { raw = JSON.parse(text); }
-    catch (e) { throw new Error('Невалидный JSON: ' + e.message); }
-
-    if (!raw.messages || !Array.isArray(raw.messages)) {
-        throw new Error('Файл не содержит массив messages');
-    }
-
-    self.postMessage({ type: 'progress', phase: 'index', pct: 60 });
-
-    const chatName = raw.name || '';
-    const chatType = raw.type || '';
-    const msgs = [];
-    const userCounts = new Map();
-    let minTs = Infinity, maxTs = -Infinity;
-
-    for (let i = 0; i < raw.messages.length; i++) {
-        const m = raw.messages[i];
-        if (!m.date_unixtime) continue;
-
-        const ts = Number(m.date_unixtime);
-        if (ts < minTs) minTs = ts;
-        if (ts > maxTs) maxTs = ts;
-
-        if (m.type === 'message' && m.from) {
-            userCounts.set(m.from, (userCounts.get(m.from) || 0) + 1);
-        }
-
-        let plain = '', masked = '';
-        if (Array.isArray(m.text)) {
-            for (const part of m.text) {
-                if (typeof part === 'string') {
-                    plain += part;
-                    masked += part;
-                } else {
-                    const t = part.text || '';
-                    plain += t;
-                    if (['link', 'url', 'text_link', 'mention'].includes(part.type)) {
-                        masked += '[URL]';
-                    } else {
-                        masked += t;
-                    }
-                }
-            }
-        } else {
-            plain = m.text || '';
-            masked = plain;
-        }
-
-        let media = '';
-        let isSticker = false;
-        let stickerEmoji = '';
-
-        if (m.media_type === 'sticker' || m.sticker_emoji) {
-            media = '[стикер]';
-            isSticker = true;
-            stickerEmoji = m.sticker_emoji || '';
-        } else if (m.photo) {
-            media = '[фото]';
-        } else if (m.media_type === 'voice_message') {
-            media = '[гс]';
-        } else if (m.media_type === 'video_message') {
-            media = '[кружок]';
-        } else if (m.media_type === 'animation') {
-            media = '[gif]';
-        } else if (m.media_type === 'video_file' || m.video_file) {
-            media = '[видео]';
-        } else if (m.audio_file) {
-            media = '[аудио]';
-        } else if (m.file && !m.media_type) {
-            media = '[файл]';
-        }
-
-        msgs.push({
-            id: m.id, ts, type: m.type || 'message',
-            from: m.from || '', reply: m.reply_to_message_id || 0,
-            fwd: m.forwarded_from || '',
-            text: plain, masked, media,
-            isSticker, stickerEmoji
-        });
-    }
-
-    raw = null;
-    msgs.sort((a, b) => a.ts - b.ts);
-
-    const idIndex = new Map();
-    for (let i = 0; i < msgs.length; i++) {
-        idIndex.set(msgs[i].id, i);
-    }
-
-    const users = Array.from(userCounts, ([name, count]) => ({ name, count }))
-        .sort((a, b) => b.count - a.count);
-
-    const isChannel = users.length <= 1;
-
-    chatData = { msgs, users, idIndex, isChannel, chatName, chatType };
-
-    self.postMessage({ type: 'progress', phase: 'done', pct: 100 });
-    self.postMessage({
-        type: 'loaded',
-        meta: { chatName, chatType, isChannel, total: msgs.length, users, minTs, maxTs }
-    });
-}
-
-function processChat(cfg) {
-    const { msgs, idIndex, isChannel } = chatData;
-    const {
-        mode, windowSeconds, dateFromTs, dateToTs, selectedUsers,
-        hideLinks, mergeAlbums, flattenNewlines, omitSingleAuthor,
-        showReply, showForwards, anonymize, stripEmoji, stripStickers,
-        stripMediaNoText, stripForwards, stripShort, shortLen
-    } = cfg;
-
-    const targets = new Set(selectedUsers);
-
-    // Binary search for date range
-    let lo = 0, hi = msgs.length;
-    {
-        let l = 0, r = msgs.length;
-        while (l < r) { const m = (l + r) >>> 1; if (msgs[m].ts < dateFromTs) l = m + 1; else r = m; }
-        lo = l;
-    }
-    {
-        let l = lo, r = msgs.length;
-        while (l < r) { const m = (l + r) >>> 1; if (msgs[m].ts <= dateToTs) l = m + 1; else r = m; }
-        hi = l;
-    }
-
-    // Scope filter
-    let keep;
-
-    if (mode === 'all') {
-        keep = null;
-    } else if (mode === 'only') {
-        keep = new Uint8Array(msgs.length);
-        for (let i = lo; i < hi; i++) {
-            if (msgs[i].type === 'message' && targets.has(msgs[i].from)) keep[i] = 1;
-        }
-    } else if (mode === 'window') {
-        const targetTs = [];
-        for (let i = lo; i < hi; i++) {
-            if (msgs[i].type === 'message' && targets.has(msgs[i].from)) targetTs.push(msgs[i].ts);
-        }
-        keep = new Uint8Array(msgs.length);
-        if (targetTs.length > 0) {
-            const intervals = [];
-            let cs = targetTs[0] - windowSeconds, ce = targetTs[0] + windowSeconds;
-            for (let i = 1; i < targetTs.length; i++) {
-                const ns = targetTs[i] - windowSeconds, ne = targetTs[i] + windowSeconds;
-                if (ns <= ce) { ce = Math.max(ce, ne); }
-                else { intervals.push(cs, ce); cs = ns; ce = ne; }
-            }
-            intervals.push(cs, ce);
-            for (let j = 0; j < intervals.length; j += 2) {
-                let il, ir;
-                { let l = lo, r = hi;
-                  while (l < r) { const m = (l + r) >>> 1; if (msgs[m].ts < intervals[j]) l = m + 1; else r = m; }
-                  il = l; }
-                { let l = il, r = hi;
-                  while (l < r) { const m = (l + r) >>> 1; if (msgs[m].ts <= intervals[j+1]) l = m + 1; else r = m; }
-                  ir = l; }
-                for (let i = il; i < ir; i++) keep[i] = 1;
-            }
-        }
-    } else if (mode === 'replies') {
-        keep = new Uint8Array(msgs.length);
-        const targetMsgIds = new Set();
-        for (let i = lo; i < hi; i++) {
-            if (msgs[i].type === 'message' && targets.has(msgs[i].from)) {
-                keep[i] = 1;
-                targetMsgIds.add(msgs[i].id);
-                if (msgs[i].reply) {
-                    const replyIdx = idIndex.get(msgs[i].reply);
-                    if (replyIdx !== undefined) keep[replyIdx] = 1;
-                }
-            }
-        }
-        for (let i = lo; i < hi; i++) {
-            if (msgs[i].reply && targetMsgIds.has(msgs[i].reply)) keep[i] = 1;
-        }
-    }
-
-    // Anonymization
-    const anonMap = new Map();
-    let anonCounter = 1;
-    const getName = (name) => {
-        if (!name) return '';
-        if (!anonymize) return name;
-        if (!anonMap.has(name)) anonMap.set(name, 'User' + (anonCounter++));
-        return anonMap.get(name);
-    };
-
-    const shouldOmitAuthor = omitSingleAuthor && isChannel;
-
-    // Build output
-    const lines = [];
-    let lastDate = '';
-    let lastAuthor = '';
-    let buf = null;
-
-    const isEmojiOnly = (text) => {
-        if (!text || !text.trim()) return false;
-        const stripped = text.trim();
-        const withoutEmoji = stripped.replace(/[\\p{Emoji_Presentation}\\p{Extended_Pictographic}\\u{FE0F}\\u{200D}\\s]/gu, '');
-        return withoutEmoji.length === 0 && stripped.length <= 40;
-    };
-
-    const flush = () => {
-        if (!buf) return;
-        const parts = [];
-
-        if (buf.fwd && showForwards) parts.push('[fwd]');
-        if (buf.isReply && showReply) parts.push('>');
-
-        if (mergeAlbums && buf.mediaList.length > 1) {
-            const counts = {};
-            for (const m of buf.mediaList) counts[m] = (counts[m] || 0) + 1;
-            const mediaStr = Object.entries(counts)
-                .map(([k, v]) => v > 1 ? k.replace(/]$/, ' x' + v + ']') : k)
-                .join(' ');
-            parts.push(mediaStr);
-        } else if (buf.mediaList.length === 1) {
-            parts.push(buf.mediaList[0]);
-        }
-
-        let textStr = buf.texts.filter(Boolean).join(' · ');
-
-        // Flatten newlines: collapse 2+ consecutive newlines into single newline.
-        // Single newlines are preserved (they represent paragraph breaks within a message).
-        if (flattenNewlines) {
-            textStr = textStr.replace(/\\n{2,}/g, '\\n');
-        }
-
-        if (textStr) parts.push(textStr);
-        if (parts.length === 0) return;
-
-        const body = parts.join(' ');
-        const timeStr = formatTime(buf.ts);
-
-        if (shouldOmitAuthor) {
-            lines.push(timeStr + ' ' + body);
-        } else if (buf.author === lastAuthor) {
-            lines.push(timeStr + '  ' + body);
-        } else {
-            lines.push(timeStr + ' ' + buf.author + ': ' + body);
-            lastAuthor = buf.author;
-        }
-
-        buf = null;
-    };
-
-    const formatTime = (ts) => {
-        const d = new Date(ts * 1000);
-        return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-    };
-
-    const formatDateHeader = (ts) => {
-        const d = new Date(ts * 1000);
-        return String(d.getDate()).padStart(2, '0') + '.' +
-               String(d.getMonth() + 1).padStart(2, '0') + '.' +
-               String(d.getFullYear()).slice(-2);
-    };
-
-    for (let i = lo; i < hi; i++) {
-        if (keep && !keep[i]) continue;
-        const m = msgs[i];
-        if (m.type !== 'message') continue;
-
-        const txt = hideLinks ? m.masked : m.text;
-        const hasText = txt.trim().length > 0;
-
-        // Per-message filters
-        if (stripForwards && m.fwd) continue;
-        if (stripStickers && m.isSticker) continue;
-        if (stripMediaNoText && m.media && !m.isSticker && !hasText) continue;
-        if (stripEmoji && !m.media && hasText && isEmojiOnly(txt)) continue;
-        if (stripShort && !m.media && hasText && txt.trim().length < shortLen) continue;
-
-        // Date headers
-        const dateStr = formatDateHeader(m.ts);
-        if (dateStr !== lastDate) {
-            flush();
-            if (lines.length > 0) lines.push('');
-            lines.push('[' + dateStr + ']');
-            lastDate = dateStr;
-            lastAuthor = '';
-        }
-
-        const author = getName(m.from);
-        const isReply = !!m.reply;
-
-        let displayMedia = m.media;
-        if (m.isSticker && m.stickerEmoji && !stripStickers) {
-            displayMedia = '[' + m.stickerEmoji + ']';
-        }
-
-        // Album merging
-        if (mergeAlbums && buf && buf.author === author && buf.ts === m.ts && buf.isReply === isReply) {
-            if (displayMedia) buf.mediaList.push(displayMedia);
-            const t = txt.trim();
-            if (t && !buf.texts.includes(t)) buf.texts.push(t);
-            continue;
-        }
-
-        flush();
-        buf = {
-            ts: m.ts, author, isReply,
-            fwd: m.fwd,
-            mediaList: displayMedia ? [displayMedia] : [],
-            texts: txt.trim() ? [txt.trim()] : []
-        };
-    }
-    flush();
-
-    const result = lines.join('\\n').trim();
-    self.postMessage({ type: 'result', text: result });
-}
-`;
-
-    const workerBlob = new Blob([WORKER_CODE], { type: 'application/javascript' });
-    const worker = new Worker(URL.createObjectURL(workerBlob));
-
-    // ═══════════════════════════════════════
-    // WORKER MESSAGES
-    // ═══════════════════════════════════════
-    worker.onmessage = ({ data }) => {
-        switch (data.type) {
-            case 'progress':
-                showLoadProgress(true, data.pct,
-                    data.phase === 'read' ? 'Чтение файла…' :
-                    data.phase === 'parse' ? 'Парсинг JSON…' :
-                    data.phase === 'index' ? 'Индексация…' : 'Готово');
-                break;
-            case 'loaded':
-                showLoadProgress(false);
-                state.meta = data.meta;
-                state.users = data.meta.users;
-                state.chatName = data.meta.chatName;
-                state.selected.clear();
-                displayChatInfo(data.meta);
-                setupDateRange(data.meta.minTs, data.meta.maxTs);
-                renderUsers();
-                dom.controls.classList.remove('hidden');
-                dom.chatInfo.classList.remove('hidden');
-                updateScopeUI();
-                validateProcess();
-                setStatus('done', `Загружено: ${data.meta.total.toLocaleString()} сообщений`);
-                break;
-            case 'result':
-                onResult(data.text);
-                break;
-            case 'error':
-                setStatus('error', 'Ошибка: ' + data.text);
-                dom.processBtn.disabled = false;
-                dom.processSpinner.classList.add('hidden');
-                showLoadProgress(false);
-                break;
-        }
-    };
-
-    // ═══════════════════════════════════════
-    // TOKEN COUNTING
-    // ═══════════════════════════════════════
-    function countTokensHeuristic(text) {
-        if (!text) return { chars: 0, tokens: 0 };
-        const len = text.length;
-        let tokens = 0;
-
-        const cyrillicWords = text.match(/[а-яА-ЯёЁ]+/g);
-        if (cyrillicWords) {
-            for (const w of cyrillicWords) {
-                if (w.length <= 3) tokens += 1;
-                else if (w.length <= 6) tokens += 2;
-                else if (w.length <= 10) tokens += 3;
-                else tokens += Math.ceil(w.length / 3.5);
-            }
-        }
-
-        const latinWords = text.match(/[a-zA-Z]+/g);
-        if (latinWords) {
-            for (const w of latinWords) {
-                if (w.length <= 5) tokens += 1;
-                else if (w.length <= 10) tokens += 2;
-                else tokens += Math.ceil(w.length / 5);
-            }
-        }
-
-        const numbers = text.match(/\d+/g);
-        if (numbers) {
-            for (const n of numbers) tokens += Math.ceil(n.length / 3);
-        }
-
-        const emoji = text.match(/[\u{1F000}-\u{1FFFF}]|[\u{2600}-\u{27BF}]|[\u{2700}-\u{27BF}]/gu);
-        if (emoji) tokens += emoji.length * 2;
-
-        const spaces = text.match(/\s+/g);
-        if (spaces) {
-            for (const s of spaces) tokens += Math.ceil(s.length * 0.3);
-        }
-
-        const punct = text.match(/[^\w\s\u0400-\u04FF]/gu);
-        if (punct) tokens += punct.length * 0.5;
-
-        return { chars: len, tokens: Math.max(1, Math.round(tokens)) };
-    }
-
-    // ═══════════════════════════════════════
-    // FILE HANDLING
-    // ═══════════════════════════════════════
-    dom.dropZone.addEventListener('dragover', e => {
-        e.preventDefault();
-        dom.dropZone.classList.add('drag-over');
-    });
-    dom.dropZone.addEventListener('dragleave', () => dom.dropZone.classList.remove('drag-over'));
-    dom.dropZone.addEventListener('drop', e => {
-        e.preventDefault();
-        dom.dropZone.classList.remove('drag-over');
-        const file = e.dataTransfer.files[0];
-        if (file && file.name.endsWith('.json')) loadFile(file);
-    });
-    dom.dropZone.addEventListener('click', () => dom.fileInput.click());
-    dom.browseBtn.addEventListener('click', e => { e.stopPropagation(); dom.fileInput.click(); });
-    dom.fileInput.addEventListener('change', e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
-
-    function loadFile(file) {
-        state.fileName = file.name.replace(/\.json$/i, '') + '_min.txt';
-        state.resultText = null;
-        dom.controls.classList.add('hidden');
-        dom.chatInfo.classList.add('hidden');
-        dom.resultSection.classList.add('hidden');
-        dom.processBtn.disabled = true;
-        setStatus('loading', 'Загрузка ' + file.name + '…');
-        showLoadProgress(true, 5, 'Отправка в обработчик…');
-        worker.postMessage({ type: 'load', file });
-    }
-
-    // ═══════════════════════════════════════
-    // CHAT INFO
-    // ═══════════════════════════════════════
-    function displayChatInfo(meta) {
-        dom.infoName.textContent = meta.chatName || '—';
-        const typeMap = {
-            'public_channel': 'Канал', 'private_channel': 'Канал (приват)',
-            'public_supergroup': 'Супергруппа', 'private_supergroup': 'Супергруппа (приват)',
-            'personal_chat': 'Личный чат', 'private_group': 'Группа', 'bot_chat': 'Бот',
-        };
-        dom.infoType.textContent = typeMap[meta.chatType] || meta.chatType || '—';
-        dom.infoCount.textContent = meta.total.toLocaleString();
-        dom.infoUsers.textContent = meta.users.length.toLocaleString();
-        const fmtDate = ts => new Date(ts * 1000).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', year: 'numeric' });
-        dom.infoPeriod.textContent = fmtDate(meta.minTs) + ' — ' + fmtDate(meta.maxTs);
-    }
-
-    function setupDateRange(minTs, maxTs) {
-        const toLocal = ts => {
-            const d = new Date(ts * 1000);
-            const p = n => String(n).padStart(2, '0');
-            return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-        };
-        const minStr = toLocal(minTs), maxStr = toLocal(maxTs);
-        dom.dateFrom.min = dom.dateTo.min = minStr;
-        dom.dateFrom.max = dom.dateTo.max = maxStr;
-        dom.dateFrom.value = minStr;
-        dom.dateTo.value = maxStr;
-    }
-
-    // ═══════════════════════════════════════
-    // USER PICKER
-    // ═══════════════════════════════════════
-    function renderUsers() {
-        const search = dom.userSearch.value.toLowerCase();
-        const frag = document.createDocumentFragment();
-        let shown = 0;
-        for (const u of state.users) {
-            if (search && !u.name.toLowerCase().includes(search)) continue;
-            if (shown++ >= 150) break;
-            const div = document.createElement('div');
-            div.className = 'user-item' + (state.selected.has(u.name) ? ' selected' : '');
-            const nameSpan = document.createElement('span');
-            nameSpan.className = 'user-item__name';
-            nameSpan.textContent = u.name;
-            const countSpan = document.createElement('span');
-            countSpan.className = 'user-item__count';
-            countSpan.textContent = u.count.toLocaleString();
-            div.appendChild(nameSpan);
-            div.appendChild(countSpan);
-            div.addEventListener('click', () => {
-                if (state.selected.has(u.name)) state.selected.delete(u.name);
-                else state.selected.add(u.name);
-                div.classList.toggle('selected');
-                updateSelectedCount();
-                validateProcess();
-            });
-            frag.appendChild(div);
-        }
-        dom.userList.innerHTML = '';
-        dom.userList.appendChild(frag);
-        updateSelectedCount();
-    }
-
-    function updateSelectedCount() {
-        dom.selectedCount.textContent = state.selected.size > 0 ? `(${state.selected.size})` : '';
-    }
-
-    dom.userSearch.addEventListener('input', renderUsers);
-
-    // ═══════════════════════════════════════
-    // SCOPE UI
-    // ═══════════════════════════════════════
-    dom.scopeMode.addEventListener('change', updateScopeUI);
-
-    function updateScopeUI() {
-        const mode = dom.scopeMode.value;
-        dom.userPicker.classList.toggle('hidden', mode === 'all');
-        dom.windowField.classList.toggle('hidden', mode !== 'window');
+    // ══════════════════════════════════════════
+    // UI-СОСТОЯНИЕ
+    // ══════════════════════════════════════════
+    function setBusy(v) {
+        state.busy = v;
+        dom.processSpinner.classList.toggle('hidden', !v);
         validateProcess();
     }
 
-    function validateProcess() {
-        const mode = dom.scopeMode.value;
-        dom.processBtn.disabled = !state.meta || (mode !== 'all' && state.selected.size === 0);
-    }
-
-    tog.fStripShort.addEventListener('change', () => {
-        dom.shortLenField.style.display = tog.fStripShort.checked ? 'flex' : 'none';
-    });
-    dom.shortLenField.style.display = tog.fStripShort.checked ? 'flex' : 'none';
-
-    // ═══════════════════════════════════════
-    // PROCESS
-    // ═══════════════════════════════════════
-    dom.processBtn.addEventListener('click', () => {
-        dom.processBtn.disabled = true;
-        dom.processSpinner.classList.remove('hidden');
-        dom.resultSection.classList.add('hidden');
-        setStatus('loading', 'Генерация сжатого текста…');
-
-        worker.postMessage({
-            type: 'process',
-            config: {
-                mode: dom.scopeMode.value,
-                windowSeconds: parseInt(dom.windowMinutes.value || '30') * 60,
-                dateFromTs: Math.floor(new Date(dom.dateFrom.value).getTime() / 1000),
-                dateToTs: Math.floor(new Date(dom.dateTo.value).getTime() / 1000),
-                selectedUsers: Array.from(state.selected),
-                hideLinks: tog.fHideLinks.checked,
-                mergeAlbums: tog.fMergeAlbums.checked,
-                flattenNewlines: tog.fFlattenNewlines.checked,
-                omitSingleAuthor: tog.fOmitSingleAuthor.checked,
-                showReply: tog.fShowReply.checked,
-                showForwards: tog.fShowForwards.checked,
-                anonymize: tog.fAnonymize.checked,
-                stripEmoji: tog.fStripEmoji.checked,
-                stripStickers: tog.fStripStickers.checked,
-                stripMediaNoText: tog.fStripMediaNoText.checked,
-                stripForwards: tog.fStripForwards.checked,
-                stripShort: tog.fStripShort.checked,
-                shortLen: parseInt(tog.fShortLen.value || '3'),
-            }
-        });
-    });
-
-    // ═══════════════════════════════════════
-    // RESULT
-    // ═══════════════════════════════════════
-    function onResult(text) {
-        state.resultText = text;
-        dom.processBtn.disabled = false;
-        dom.processSpinner.classList.add('hidden');
-
-        if (!text) {
-            setStatus('done', 'Результат пуст — ничего не прошло фильтры.');
-            return;
-        }
-
-        const { chars, tokens } = countTokensHeuristic(text);
-        const lineCount = text.split('\n').length;
-        const origChars = state.meta ? state.meta.total * 120 : chars * 3;
-        const compression = origChars > 0 ? Math.round((1 - chars / origChars) * 100) : 0;
-
-        dom.resultStats.innerHTML = `
-            <div class="result__stat">
-                <span class="result__stat-label">Символов</span>
-                <span class="result__stat-value">${chars.toLocaleString()}</span>
-            </div>
-            <div class="result__stat">
-                <span class="result__stat-label">Токенов ≈</span>
-                <span class="result__stat-value result__stat-value--accent">${tokens.toLocaleString()}</span>
-            </div>
-            <div class="result__stat">
-                <span class="result__stat-label">Строк</span>
-                <span class="result__stat-value">${lineCount.toLocaleString()}</span>
-            </div>
-            <div class="result__stat">
-                <span class="result__stat-label">Сжатие</span>
-                <span class="result__stat-value result__stat-value--success">−${compression}%</span>
-            </div>
-        `;
-
-        const MAX_PREVIEW = 20000;
-        let preview = text;
-        if (text.length > MAX_PREVIEW) {
-            preview = text.substring(0, MAX_PREVIEW) + '\n\n── обрезано для предпросмотра (' + chars.toLocaleString() + ' символов всего) ──';
-        }
-        dom.resultPreview.textContent = preview;
-        dom.resultSection.classList.remove('hidden');
-        setStatus('done', 'Готово. ≈' + tokens.toLocaleString() + ' токенов');
-        dom.resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-
-    // ═══════════════════════════════════════
-    // COPY & DOWNLOAD
-    // ═══════════════════════════════════════
-    dom.copyBtn.addEventListener('click', async () => {
-        if (!state.resultText) return;
-        try {
-            await navigator.clipboard.writeText(state.resultText);
-            const span = dom.copyBtn.querySelector('span');
-            const orig = span.textContent;
-            span.textContent = 'Скопировано!';
-            setTimeout(() => span.textContent = orig, 2000);
-        } catch {
-            const ta = document.createElement('textarea');
-            ta.value = state.resultText;
-            document.body.appendChild(ta);
-            ta.select();
-            document.execCommand('copy');
-            document.body.removeChild(ta);
-        }
-    });
-
-    dom.downloadBtn.addEventListener('click', () => {
-        if (!state.resultText) return;
-        const blob = new Blob([state.resultText], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = state.fileName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-    });
-
-    // ═══════════════════════════════════════
-    // UI HELPERS
-    // ═══════════════════════════════════════
     function setStatus(type, text) {
-        dom.statusBar.classList.remove('hidden', 'status-bar--done');
+        dom.statusBar.classList.remove('hidden', 'status-bar--done', 'status-bar--error');
         if (type === 'done') dom.statusBar.classList.add('status-bar--done');
+        if (type === 'error') dom.statusBar.classList.add('status-bar--error');
         dom.statusText.textContent = text;
     }
 
@@ -778,9 +158,359 @@ function processChat(cfg) {
         if (show) {
             dom.loadBar.style.width = pct + '%';
             dom.loadPct.textContent = Math.round(pct) + '%';
-            if (hint) dom.statusText.textContent = hint;
+            if (hint) setStatus('loading', hint);
         }
     }
 
+    function validateProcess() {
+        const mode = dom.scopeMode.value;
+        const needUsers = mode !== 'all';
+        dom.processBtn.disabled = state.busy || !state.meta || (needUsers && state.selected.size === 0);
+    }
+
+    function syncShortLenField() {
+        dom.shortLenField.style.display = tog.fStripShort.checked ? 'flex' : 'none';
+    }
+
+    // Взаимоисключающие опции: нельзя одновременно показывать и удалять пересылки
+    function syncForwardConflict() {
+        const strip = tog.fStripForwards.checked;
+        tog.fShowForwards.checked = strip ? false : tog.fShowForwards.checked;
+        tog.fShowForwards.disabled = strip;
+        const wrap = tog.fShowForwards.closest('.toggle');
+        if (wrap) wrap.classList.toggle('is-disabled', strip);
+    }
+
+    // ══════════════════════════════════════════
+    // ЗАГРУЗКА ФАЙЛА
+    // ══════════════════════════════════════════
+    function isAcceptableFile(file) {
+        return /\.(json|txt)$/i.test(file.name) || /json|text/.test(file.type || '');
+    }
+
+    function loadFile(file) {
+        if (state.busy) {
+            setStatus('error', 'Дождитесь завершения текущей обработки.');
+            return;
+        }
+        if (!isAcceptableFile(file)) {
+            setStatus('error', `«${file.name}» — не похож на экспорт Telegram (нужен .json или .txt).`);
+            return;
+        }
+
+        state.meta = null;
+        state.selected.clear();
+        state.resultText = null;
+        dom.controls.classList.add('hidden');
+        dom.chatInfo.classList.add('hidden');
+        dom.resultSection.classList.add('hidden');
+        setStatus('loading', 'Загрузка ' + file.name + '…');
+        showLoadProgress(true, 0, 'Чтение файла…');
+        setBusy(true);
+        worker.postMessage({ type: 'load', file });
+    }
+
+    function onLoaded(meta) {
+        state.meta = meta;
+        document.title = (meta.chatName ? meta.chatName + ' — ' : '') + 'TG Minifier';
+        displayChatInfo(meta);
+        setupDateRange(meta);
+        renderUsers();
+        dom.controls.classList.remove('hidden');
+        dom.chatInfo.classList.remove('hidden');
+        updateScopeUI();
+        setStatus('done', `Загружено: ${meta.total.toLocaleString('ru-RU')} сообщений` +
+            (meta.skippedNoTs ? ` (без даты пропущено: ${meta.skippedNoTs})` : ''));
+    }
+
+    function displayChatInfo(meta) {
+        dom.infoName.textContent = meta.chatName || '—';
+        const typeMap = {
+            public_channel: 'Канал', private_channel: 'Канал (приват)',
+            public_supergroup: 'Супергруппа', private_supergroup: 'Супергруппа (приват)',
+            personal_chat: 'Личный чат', private_group: 'Группа', bot_chat: 'Бот',
+        };
+        dom.infoType.textContent = typeMap[meta.chatType] || meta.chatType || '—';
+        dom.infoCount.textContent = meta.total.toLocaleString('ru-RU');
+        dom.infoUsers.textContent = meta.users.length.toLocaleString('ru-RU');
+
+        // Период печатаем в «настенном» времени экспортёра — без таймзон машины
+        const fmt = (ts) => {
+            const shift = ts + meta.tzOffset;
+            const d = new Date(Math.floor(shift / 86400) * 86400 * 1000);
+            return `${String(d.getUTCDate()).padStart(2, '0')}.${String(d.getUTCMonth() + 1).padStart(2, '0')}.${d.getUTCFullYear()}`;
+        };
+        dom.infoPeriod.textContent = fmt(meta.minTs) + ' — ' + fmt(meta.maxTs);
+    }
+
+    function setupDateRange(meta) {
+        // Границы диапазона — тоже в настенном времени экспортёра (строкой, без Date)
+        const dayStr = (ts, next) => {
+            const d = new Date((Math.floor((ts + meta.tzOffset) / 86400) + (next ? 1 : 0)) * 86400 * 1000);
+            return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+        };
+        const minStr = dayStr(meta.minTs, false) + 'T00:00';
+        const maxStr = dayStr(meta.maxTs, false) + 'T23:59';
+        dom.dateFrom.min = dom.dateTo.min = minStr;
+        dom.dateFrom.max = dom.dateTo.max = maxStr;
+        dom.dateFrom.value = minStr;
+        dom.dateTo.value = maxStr;
+    }
+
+    // ══════════════════════════════════════════
+    // ВЫБОР УЧАСТНИКОВ (ключ — from_id, а не имя!)
+    // ══════════════════════════════════════════
+    function renderUsers() {
+        const search = dom.userSearch.value.trim().toLowerCase();
+        const frag = document.createDocumentFragment();
+        const MAX_SHOWN = 300;
+        let shown = 0;
+        let totalMatched = 0;
+
+        // имена-дубликаты помечаем суффиксом, чтобы их можно было различить
+        const dupNames = new Set();
+        {
+            const seen = new Map();
+            for (const u of state.meta.users) {
+                const n = seen.get(u.name) || 0;
+                if (n === 1) dupNames.add(u.name);
+                seen.set(u.name, n + 1);
+            }
+        }
+
+        for (const u of state.meta.users) {
+            if (search && !u.name.toLowerCase().includes(search)) continue;
+            totalMatched++;
+            if (shown >= MAX_SHOWN) continue;
+            shown++;
+
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'user-item' + (state.selected.has(u.id) ? ' selected' : '');
+            btn.setAttribute('role', 'option');
+            btn.setAttribute('aria-selected', String(state.selected.has(u.id)));
+
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'user-item__name';
+            nameSpan.textContent = dupNames.has(u.name) ? `${u.name} (${u.id})` : u.name;
+
+            const countSpan = document.createElement('span');
+            countSpan.className = 'user-item__count';
+            countSpan.textContent = u.count.toLocaleString('ru-RU');
+
+            btn.append(nameSpan, countSpan);
+            btn.addEventListener('click', () => {
+                if (state.selected.has(u.id)) state.selected.delete(u.id);
+                else state.selected.add(u.id);
+                btn.classList.toggle('selected');
+                btn.setAttribute('aria-selected', String(state.selected.has(u.id)));
+                updateSelectedCount();
+                validateProcess();
+            });
+            frag.appendChild(btn);
+        }
+
+        dom.userList.innerHTML = '';
+        dom.userList.appendChild(frag);
+
+        if (totalMatched > MAX_SHOWN) {
+            const note = document.createElement('div');
+            note.className = 'user-picker__more';
+            note.textContent = `Показаны первые ${MAX_SHOWN} из ${totalMatched} — уточните поиск`;
+            dom.userList.appendChild(note);
+        }
+        updateSelectedCount();
+    }
+
+    function updateSelectedCount() {
+        dom.selectedCount.textContent = state.selected.size > 0 ? `(${state.selected.size})` : '';
+    }
+
+    // ══════════════════════════════════════════
+    // ОБРАБОТКА
+    // ══════════════════════════════════════════
+    function updateScopeUI() {
+        const mode = dom.scopeMode.value;
+        const needUsers = mode !== 'all';
+        dom.userPicker.classList.toggle('hidden', !needUsers || state.meta.users.length === 0);
+        dom.windowField.classList.toggle('hidden', mode !== 'window');
+        if (needUsers && state.meta.users.length === 0) {
+            setStatus('error', 'В этом чате нет сообщений с авторами — доступны режимы «Всё».');
+            dom.scopeMode.value = 'all';
+            dom.userPicker.classList.add('hidden');
+            dom.windowField.classList.add('hidden');
+        }
+        validateProcess();
+    }
+
+    function readConfig() {
+        const dateFrom = dom.dateFrom.value || null;
+        const dateTo = dom.dateTo.value || null;
+        if (dateFrom && dateTo && dateFrom > dateTo) {
+            throw new Error('Дата «С» позже даты «По» — исправьте диапазон.');
+        }
+        return {
+            mode: dom.scopeMode.value,
+            windowMinutes: dom.windowMinutes.value || '30',
+            dateFromStr: dateFrom,
+            dateToStr: dateTo,
+            selectedUsers: Array.from(state.selected),
+            hideLinks: tog.fHideLinks.checked,
+            mergeAlbums: tog.fMergeAlbums.checked,
+            groupRepeats: tog.fGroupRepeats.checked,
+            flattenNewlines: tog.fFlattenNewlines.checked,
+            omitSingleAuthor: tog.fOmitSingleAuthor.checked,
+            showReply: tog.fShowReply.checked,
+            showForwards: tog.fShowForwards.checked,
+            showService: tog.fShowService.checked,
+            anonymize: tog.fAnonymize.checked,
+            stripEmoji: tog.fStripEmoji.checked,
+            stripStickers: tog.fStripStickers.checked,
+            stripMediaNoText: tog.fStripMediaNoText.checked,
+            stripForwards: tog.fStripForwards.checked,
+            stripShort: tog.fStripShort.checked,
+            shortLen: tog.fShortLen.value || '3',
+        };
+    }
+
+    function startProcess() {
+        let cfg;
+        try { cfg = readConfig(); }
+        catch (e) { setStatus('error', e.message); return; }
+
+        setBusy(true);
+        dom.resultSection.classList.add('hidden');
+        setStatus('loading', 'Генерация сжатого текста…');
+        worker.postMessage({ type: 'process', config: cfg });
+    }
+
+    function onResult(text) {
+        state.resultText = text;
+        dom.processSpinner.classList.add('hidden');
+        state.busy = false;
+        validateProcess();
+
+        if (!text) {
+            setStatus('done', 'Результат пуст — ничего не прошло фильтры.');
+            return;
+        }
+
+        const { chars, tokens } = core.countTokens(text);
+        const lineCount = text.split('\n').length;
+        const srcChars = state.meta ? state.meta.sourceChars : 0;
+        const compression = srcChars > 0 ? Math.round((1 - chars / srcChars) * 100) : 0;
+
+        dom.resultStats.innerHTML = `
+            <div class="result__stat">
+                <span class="result__stat-label">Символов</span>
+                <span class="result__stat-value">${chars.toLocaleString('ru-RU')}</span>
+            </div>
+            <div class="result__stat">
+                <span class="result__stat-label">Токенов ≈</span>
+                <span class="result__stat-value result__stat-value--accent">${tokens.toLocaleString('ru-RU')}</span>
+            </div>
+            <div class="result__stat">
+                <span class="result__stat-label">Строк</span>
+                <span class="result__stat-value">${lineCount.toLocaleString('ru-RU')}</span>
+            </div>
+            <div class="result__stat" title="Относительно исходного файла: ${srcChars.toLocaleString('ru-RU')} символов">
+                <span class="result__stat-label">Сжатие</span>
+                <span class="result__stat-value result__stat-value--success">−${compression}%</span>
+            </div>
+        `;
+
+        const MAX_PREVIEW = 20000;
+        let preview = text;
+        if (text.length > MAX_PREVIEW) {
+            preview = text.slice(0, MAX_PREVIEW) +
+                `\n\n── предпросмотр обрезан (всего ${chars.toLocaleString('ru-RU')} символов) ──`;
+        }
+        dom.resultPreview.textContent = preview;
+        dom.resultSection.classList.remove('hidden');
+        setStatus('done', `Готово: ${chars.toLocaleString('ru-RU')} симв. (−${compression}% от файла), ≈${tokens.toLocaleString('ru-RU')} токенов`);
+        dom.resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // ══════════════════════════════════════════
+    // КОПИРОВАНИЕ И СКАЧИВАНИЕ
+    // ══════════════════════════════════════════
+    dom.copyBtn.addEventListener('click', async () => {
+        if (!state.resultText) return;
+        try {
+            await navigator.clipboard.writeText(state.resultText);
+            flashLabel(dom.copyBtn, 'Скопировано!');
+        } catch {
+            // fallback для file:// без clipboard-разрешений
+            const ta = document.createElement('textarea');
+            ta.value = state.resultText;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); flashLabel(dom.copyBtn, 'Скопировано!'); }
+            catch { setStatus('error', 'Не удалось скопировать — выделите текст вручную.'); }
+            document.body.removeChild(ta);
+        }
+    });
+
+    function flashLabel(btn, text) {
+        const span = btn.querySelector('span');
+        const orig = span.textContent;
+        span.textContent = text;
+        setTimeout(() => { span.textContent = orig; }, 2000);
+    }
+
+    dom.downloadBtn.addEventListener('click', () => {
+        if (!state.resultText) return;
+        const base = core.sanitizeFileName(state.meta && state.meta.chatName) || 'minified';
+        const blob = new Blob([state.resultText], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${base}_minified.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    });
+
+    // ══════════════════════════════════════════
+    // ПРИВЯЗКА СОБЫТИЙ
+    // ══════════════════════════════════════════
+    dom.dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dom.dropZone.classList.add('drag-over');
+    });
+    dom.dropZone.addEventListener('dragleave', () => dom.dropZone.classList.remove('drag-over'));
+    dom.dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dom.dropZone.classList.remove('drag-over');
+        const file = e.dataTransfer.files[0];
+        if (file) loadFile(file);
+    });
+    dom.dropZone.addEventListener('click', () => dom.fileInput.click());
+    dom.dropZone.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); dom.fileInput.click(); }
+    });
+    dom.browseBtn.addEventListener('click', (e) => { e.stopPropagation(); dom.fileInput.click(); });
+    dom.fileInput.addEventListener('change', (e) => {
+        if (e.target.files[0]) loadFile(e.target.files[0]);
+        e.target.value = ''; // повторный выбор того же файла тоже срабатывает
+    });
+
+    document.querySelectorAll('.preset').forEach((el) => {
+        el.addEventListener('click', () => applyPreset(el.dataset.preset));
+    });
+
+    dom.scopeMode.addEventListener('change', updateScopeUI);
+    dom.userSearch.addEventListener('input', renderUsers);
+    tog.fStripShort.addEventListener('change', syncShortLenField);
+    tog.fStripForwards.addEventListener('change', syncForwardConflict);
+    dom.processBtn.addEventListener('click', startProcess);
+
+    // ══════════════════════════════════════════
+    // СТАРТ
+    // ══════════════════════════════════════════
     applyPreset('balanced');
-});
+    validateProcess();
+})();

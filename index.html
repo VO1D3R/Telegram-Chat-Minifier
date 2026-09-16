@@ -3,9 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="Сжатие экспортов чатов Telegram в компактный текст для анализа LLM. Работает локально, без сети.">
+<meta name="theme-color" content="#0a0a0b">
 <title>TG Minifier</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,500;0,8..60,700;1,8..60,400&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -15,34 +17,34 @@
       <span class="header__icon">⚡</span>
       <h1 class="header__title">TG Minifier</h1>
     </div>
-    <p class="header__sub">Сжатие Telegram-экспортов для анализа через LLM</p>
+    <p class="header__sub">Сжатие Telegram-экспортов для анализа через LLM · v2.0</p>
   </header>
 
-  <section id="dropZone" class="drop-zone">
-    <input type="file" id="fileInput" accept=".json" hidden>
+  <section id="dropZone" class="drop-zone" role="button" tabindex="0" aria-label="Загрузить JSON-файл экспорта Telegram">
+    <input type="file" id="fileInput" accept=".json,.txt,application/json,text/plain" hidden>
     <div class="drop-zone__content">
       <div class="drop-zone__icon">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
           <polyline points="17 8 12 3 7 8"/>
           <line x1="12" y1="3" x2="12" y2="15"/>
         </svg>
       </div>
       <p class="drop-zone__text">Перетащите JSON-файл сюда</p>
-      <p class="drop-zone__hint">или <button type="button" id="browseBtn" class="drop-zone__browse">выберите файл</button></p>
+      <p class="drop-zone__hint">или <button type="button" id="browseBtn" class="drop-zone__browse">выберите файл</button> · подойдёт и result.json.txt</p>
     </div>
-    <div class="drop-zone__progress hidden" id="loadProgress">
+    <div class="drop-zone__progress hidden" id="loadProgress" aria-hidden="true">
       <div class="drop-zone__bar" id="loadBar"></div>
       <span class="drop-zone__pct" id="loadPct">0%</span>
     </div>
   </section>
 
-  <div id="statusBar" class="status-bar hidden">
-    <span id="statusIcon" class="status-bar__icon">◉</span>
+  <div id="statusBar" class="status-bar hidden" role="status" aria-live="polite">
+    <span id="statusIcon" class="status-bar__icon" aria-hidden="true">◉</span>
     <span id="statusText" class="status-bar__text"></span>
   </div>
 
-  <section id="chatInfo" class="chat-info hidden">
+  <section id="chatInfo" class="chat-info hidden" aria-label="Информация о чате">
     <div class="chat-info__grid">
       <div class="chat-info__stat">
         <span class="chat-info__label">Чат</span>
@@ -72,20 +74,20 @@
     <section class="panel">
       <h2 class="panel__title">Пресет сжатия</h2>
       <div class="presets">
-        <button class="preset" data-preset="safe">
+        <button type="button" class="preset" data-preset="safe" aria-pressed="false">
           <span class="preset__icon">🛡️</span>
           <span class="preset__name">Бережный</span>
-          <span class="preset__desc">Минимальные потери. Убирает только метаданные и пустые сообщения.</span>
+          <span class="preset__desc">Минимальные потери: убирает только метаданные и пустые сообщения.</span>
         </button>
-        <button class="preset active" data-preset="balanced">
+        <button type="button" class="preset active" data-preset="balanced" aria-pressed="true">
           <span class="preset__icon">⚖️</span>
           <span class="preset__name">Баланс</span>
-          <span class="preset__desc">Убирает ссылки, склеивает альбомы, убирает пустые строки и медиа без подписей.</span>
+          <span class="preset__desc">Убирает ссылки, стикеры и медиа без подписи, склеивает альбомы.</span>
         </button>
-        <button class="preset" data-preset="aggressive">
+        <button type="button" class="preset" data-preset="aggressive" aria-pressed="false">
           <span class="preset__icon">🔥</span>
           <span class="preset__name">Агрессивный</span>
-          <span class="preset__desc">Максимум сжатия. Убирает emoji-only, стикеры, короткие реплики, пересылки.</span>
+          <span class="preset__desc">Максимум сжатия: emoji-only, короткие реплики, пересылки, повторы.</span>
         </button>
       </div>
     </section>
@@ -94,7 +96,7 @@
       <h2 class="panel__title">Область выборки</h2>
       <div class="scope-grid">
         <div class="field">
-          <label class="field__label">Режим</label>
+          <label class="field__label" for="scopeMode">Режим</label>
           <select id="scopeMode" class="field__select">
             <option value="all">Всё</option>
             <option value="window">Окно вокруг выбранных</option>
@@ -103,81 +105,89 @@
           </select>
         </div>
         <div class="field" id="windowField">
-          <label class="field__label">Окно ± мин</label>
-          <input type="number" id="windowMinutes" class="field__input" value="30" min="0" max="1440">
+          <label class="field__label" for="windowMinutes">Окно ± мин</label>
+          <input type="number" id="windowMinutes" class="field__input" value="30" min="0" max="10080" step="1">
         </div>
       </div>
       <div class="scope-grid" style="margin-top:12px">
         <div class="field">
-          <label class="field__label">С</label>
+          <label class="field__label" for="dateFrom">С</label>
           <input type="datetime-local" id="dateFrom" class="field__input">
         </div>
         <div class="field">
-          <label class="field__label">По</label>
+          <label class="field__label" for="dateTo">По</label>
           <input type="datetime-local" id="dateTo" class="field__input">
         </div>
       </div>
       <div id="userPicker" class="user-picker hidden">
-        <label class="field__label">Участники <span id="selectedCount" class="user-picker__count"></span></label>
-        <input type="text" id="userSearch" class="field__input" placeholder="Поиск…">
-        <div id="userList" class="user-picker__list"></div>
+        <label class="field__label" for="userSearch">Участники <span id="selectedCount" class="user-picker__count"></span></label>
+        <input type="text" id="userSearch" class="field__input" placeholder="Поиск…" autocomplete="off">
+        <div id="userList" class="user-picker__list" role="listbox" aria-multiselectable="true" aria-label="Участники чата"></div>
       </div>
     </section>
 
     <details class="panel panel--collapsible">
       <summary class="panel__title panel__title--toggle">Тонкая настройка</summary>
       <div class="fine-grid">
-        <label class="toggle" title="Все ссылки в тексте заменяются на [URL]. Экономит токены на длинных URL.">
+        <label class="toggle" title="Ссылки в тексте заменяются на [URL]. Упоминания @name и e-mail сохраняются.">
           <input type="checkbox" id="fHideLinks" checked><span class="toggle__track"></span>
           <span class="toggle__label">Удалять ссылки<span class="toggle__hint">twitch.tv/… → [URL]</span></span>
         </label>
-        <label class="toggle" title="Несколько фото/видео отправленных одновременно (альбом) объединяются в одну строку: [фото x4] вместо четырёх отдельных.">
+        <label class="toggle" title="Фото/видео/голосовые, отправленные подряд (альбом или серия), объединяются: [фото x4].">
           <input type="checkbox" id="fMergeAlbums" checked><span class="toggle__track"></span>
           <span class="toggle__label">Склеивать альбомы<span class="toggle__hint">4 фото подряд → [фото x4]</span></span>
         </label>
-        <label class="toggle" title="Убирает пустые строки внутри сообщений. Одинарные переносы строк сохраняются.">
-          <input type="checkbox" id="fFlattenNewlines" checked><span class="toggle__track"></span>
-          <span class="toggle__label">Убрать пустые строки<span class="toggle__hint">Схлопывает двойные+ переносы</span></span>
+        <label class="toggle" title="Идентичные текстовые сообщения подряд от одного автора группируются: да (x3).">
+          <input type="checkbox" id="fGroupRepeats"><span class="toggle__track"></span>
+          <span class="toggle__label">Группировать повторы<span class="toggle__hint">«да да да» → да (x3)</span></span>
         </label>
-        <label class="toggle" title="В каналах автор всегда один (сам канал). Его имя убирается, остаётся только время и текст. Экономит ~30% токенов.">
+        <label class="toggle" title="Убирает пустые строки внутри сообщений. Одинарные переносы сохраняются.">
+          <input type="checkbox" id="fFlattenNewlines" checked><span class="toggle__track"></span>
+          <span class="toggle__label">Убрать пустые строки<span class="toggle__hint">схлопывает двойные+ переносы</span></span>
+        </label>
+        <label class="toggle" title="Если после фильтров остался один автор — его имя убирается. Работает и для выборки одного человека.">
           <input type="checkbox" id="fOmitSingleAuthor" checked><span class="toggle__track"></span>
-          <span class="toggle__label">Скрыть автора канала<span class="toggle__hint">Если автор всего один</span></span>
+          <span class="toggle__label">Скрывать единственного автора<span class="toggle__hint">если автор после фильтров один</span></span>
         </label>
         <label class="toggle" title="Перед сообщениями-ответами ставится символ >. Помогает ИИ понять структуру диалога.">
           <input type="checkbox" id="fShowReply" checked><span class="toggle__track"></span>
           <span class="toggle__label">Помечать ответы<span class="toggle__hint">> перед reply-сообщениями</span></span>
         </label>
-        <label class="toggle" title="Пересланные сообщения помечаются [fwd]. Без этой опции пересылки выглядят как обычные сообщения.">
-          <input type="checkbox" id="fShowForwards"><span class="toggle__track"></span>
-          <span class="toggle__label">Показывать пересылки<span class="toggle__hint">[fwd] перед forwarded</span></span>
+        <label class="toggle" title="Пересланные сообщения помечаются [fwd Имя]. Без опции пересылки выглядят как обычные сообщения автора.">
+          <input type="checkbox" id="fShowForwards" checked><span class="toggle__track"></span>
+          <span class="toggle__label">Помечать пересылки<span class="toggle__hint">[fwd Имя] перед forwarded</span></span>
         </label>
-        <label class="toggle" title="Все имена заменяются на User1, User2 и т.д. Полезно для приватности при отправке чата ИИ.">
+        <label class="toggle" title="Сервисные события: звонки, вход/выход участников, закрепления. По умолчанию скрыты.">
+          <input type="checkbox" id="fShowService"><span class="toggle__track"></span>
+          <span class="toggle__label">Показывать сервисные<span class="toggle__hint">[звонок 12:34], вход/выход</span></span>
+        </label>
+        <label class="toggle" title="Все имена заменяются на User1, User2 и т.д. Анонимизация стабильна: один человек = один псевдоним.">
           <input type="checkbox" id="fAnonymize"><span class="toggle__track"></span>
-          <span class="toggle__label">Анонимизировать имена<span class="toggle__hint">Имена → User1, User2…</span></span>
+          <span class="toggle__label">Анонимизировать имена<span class="toggle__hint">имена → User1, User2…</span></span>
         </label>
-        <label class="toggle" title="Удаляет сообщения которые содержат только эмоджи без текста. Например: 😂😂😂 или 👍">
+        <label class="toggle" title="Удаляет сообщения, состоящие только из эмодзи (например 😂😂😂). Числа и текст не удаляются.">
           <input type="checkbox" id="fStripEmoji"><span class="toggle__track"></span>
-          <span class="toggle__label">Убрать emoji-only<span class="toggle__hint">Сообщения из одних 😂👍🔥</span></span>
+          <span class="toggle__label">Убрать emoji-only<span class="toggle__hint">сообщения из одних 😂👍🔥</span></span>
         </label>
-        <label class="toggle" title="Удаляет все сообщения-стикеры. Стикеры обычно не несут информации для анализа.">
+        <label class="toggle" title="Удаляет все сообщения-стикеры.">
           <input type="checkbox" id="fStripStickers"><span class="toggle__track"></span>
-          <span class="toggle__label">Убрать стикеры<span class="toggle__hint">Только стикеры, не фото/видео</span></span>
+          <span class="toggle__label">Убрать стикеры<span class="toggle__hint">только стикеры</span></span>
         </label>
-        <label class="toggle" title="Удаляет фото, видео, голосовые и другие медиа без текстовой подписи. Фото с подписью сохраняются.">
+        <label class="toggle" title="Удаляет любое медиа без текстовой подписи: фото, видео, голосовые, стикеры. Медиа с подписью сохраняется.">
           <input type="checkbox" id="fStripMediaNoText"><span class="toggle__track"></span>
           <span class="toggle__label">Убрать медиа без подписи<span class="toggle__hint">[фото] без текста → удалено</span></span>
         </label>
-        <label class="toggle" title="Удаляет все пересланные (forwarded) сообщения целиком.">
+        <label class="toggle" title="Удаляет все пересланные сообщения целиком. Конфликтует с «Помечать пересылки» — метка отключится автоматически.">
           <input type="checkbox" id="fStripForwards"><span class="toggle__track"></span>
-          <span class="toggle__label">Убрать пересылки<span class="toggle__hint">Все forwarded сообщения</span></span>
+          <span class="toggle__label">Убрать пересылки<span class="toggle__hint">все forwarded сообщения</span></span>
         </label>
-        <label class="toggle" title="Удаляет текстовые сообщения короче указанного количества символов. Фильтрует 'да', 'ок', '+' и подобный мусор.">
+        <label class="toggle" title="Удаляет текстовые сообщения короче указанной длины. Фильтрует «да», «ок», «+» и подобное.">
           <input type="checkbox" id="fStripShort"><span class="toggle__track"></span>
-          <span class="toggle__label">Убрать короткие<span class="toggle__hint">Текст короче N символов</span></span>
+          <span class="toggle__label">Убрать короткие<span class="toggle__hint">текст короче N символов</span></span>
         </label>
         <div class="field field--inline" id="shortLenField">
-          <label class="field__label">Мин. длина</label>
-          <input type="number" id="fShortLen" class="field__input" value="3" min="1" max="50">
+          <label class="field__label" for="fShortLen">Мин. длина</label>
+          <input type="number" id="fShortLen" class="field__input" value="3" min="1" max="200">
         </div>
       </div>
     </details>
@@ -185,7 +195,7 @@
     <div class="actions">
       <button id="processBtn" class="btn btn--primary" disabled>
         <span class="btn__text">Сжать</span>
-        <span class="btn__spinner hidden" id="processSpinner"></span>
+        <span class="btn__spinner hidden" id="processSpinner" aria-hidden="true"></span>
       </button>
     </div>
   </main>
@@ -195,11 +205,11 @@
       <h2 class="panel__title">Результат</h2>
       <div class="result__actions">
         <button id="copyBtn" class="btn btn--sm" title="Копировать весь текст в буфер обмена">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           <span>Копировать</span>
         </button>
         <button id="downloadBtn" class="btn btn--sm" title="Скачать полный результат как текстовый файл">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span>Скачать .txt</span>
         </button>
       </div>
@@ -211,10 +221,11 @@
   </section>
 
   <footer class="footer">
-    <span>TG Minifier — сжатие чатов Telegram для LLM-анализа</span>
+    <span>TG Minifier 2.0 — сжатие чатов Telegram для LLM-анализа · обработка локальная, внешних запросов нет</span>
   </footer>
 </div>
 
+<script src="js/core.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

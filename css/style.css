@@ -1,9 +1,10 @@
-/* css/style.css */
+/* css/style.css — Telegram Chat Minifier 2.0 */
 
 :root {
-  --font-display: 'Source Serif 4', 'Georgia', serif;
-  --font-mono: 'JetBrains Mono', 'Menlo', monospace;
-  --font-ui: 'JetBrains Mono', system-ui, sans-serif;
+  /* Шрифты системные: никаких внешних запросов, работает офлайн и на file:// */
+  --font-display: Georgia, 'Times New Roman', serif;
+  --font-mono: ui-monospace, 'Cascadia Mono', 'JetBrains Mono', Consolas, 'Courier New', monospace;
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 
   --bg-deep: #0a0a0b;
   --bg-surface: #111113;
@@ -27,17 +28,15 @@
 
   --success: #5a9a6a;
   --danger: #b55454;
-  --info: #5a7a9a;
 
   --radius-sm: 4px;
   --radius: 8px;
   --radius-lg: 12px;
 
-  --shadow: 0 2px 12px rgba(0,0,0,0.4);
-  --shadow-lg: 0 8px 32px rgba(0,0,0,0.6);
-
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  color-scheme: dark; /* нативные контролы (datetime-local) в тёмной теме */
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -63,6 +62,13 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* Доступная фокусировка для всех интерактивных элементов */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
 
 .hidden { display: none !important; }
 
@@ -107,7 +113,7 @@ body {
   padding: 48px 24px;
   text-align: center;
   cursor: pointer;
-  transition: all 0.3s var(--ease);
+  transition: border-color 0.3s var(--ease), transform 0.3s var(--ease);
   background: var(--bg-surface);
   overflow: hidden;
 }
@@ -122,7 +128,7 @@ body {
   pointer-events: none;
 }
 
-.drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent-dim); }
+.drop-zone:hover, .drop-zone.drag-over, .drop-zone:focus-visible { border-color: var(--accent-dim); }
 .drop-zone:hover::before, .drop-zone.drag-over::before { opacity: 1; }
 .drop-zone.drag-over { transform: scale(1.01); border-color: var(--accent); }
 
@@ -176,7 +182,9 @@ body {
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
 .status-bar--done .status-bar__icon { color: var(--success); animation: none; }
-.status-bar__text { color: var(--text-dim); }
+.status-bar--error .status-bar__icon { color: var(--danger); animation: none; }
+.status-bar--error .status-bar__text { color: var(--text-bright); }
+.status-bar__text { color: var(--text-dim); word-break: break-word; }
 
 /* CHAT INFO */
 .chat-info { margin: 16px 0; animation: fadeIn 0.4s var(--ease); }
@@ -270,7 +278,7 @@ details[open] > .panel__title--toggle::before { transform: rotate(90deg); }
   transition: border-color 0.2s var(--ease); outline: none;
 }
 
-.field__input:focus, .field__select:focus { border-color: var(--border-focus); }
+.field__input:focus, .field__select:focus { border-color: var(--border-focus); outline: none; }
 
 .field--inline { display: flex; align-items: center; gap: 10px; }
 .field--inline .field__label { margin: 0; white-space: nowrap; }
@@ -287,17 +295,22 @@ details[open] > .panel__title--toggle::before { transform: rotate(90deg); }
 }
 
 .user-item {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 8px 12px; cursor: pointer; font-size: 13px;
-  border-bottom: 1px solid var(--border-subtle);
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  width: 100%; padding: 8px 12px; cursor: pointer; font-size: 13px; font-family: inherit;
+  border: none; border-bottom: 1px solid var(--border-subtle);
+  background: none; color: var(--text); text-align: left;
   transition: background 0.15s var(--ease);
 }
 
 .user-item:last-child { border-bottom: none; }
 .user-item:hover { background: var(--bg-hover); }
 .user-item.selected { background: var(--accent-bg); border-left: 3px solid var(--accent); }
-.user-item__name { color: var(--text); }
-.user-item__count { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.user-item__name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-item__count { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+
+.user-picker__more {
+  padding: 8px 12px; font-size: 11px; color: var(--text-muted); text-align: center;
+}
 
 /* TOGGLES */
 .fine-grid {
@@ -307,6 +320,7 @@ details[open] > .panel__title--toggle::before { transform: rotate(90deg); }
 }
 
 .toggle {
+  position: relative;
   display: flex; align-items: center; gap: 10px;
   padding: 8px 10px; border-radius: var(--radius-sm);
   cursor: pointer; font-size: 13px; color: var(--text-dim);
@@ -314,11 +328,21 @@ details[open] > .panel__title--toggle::before { transform: rotate(90deg); }
 }
 
 .toggle:hover { color: var(--text); background: var(--bg-hover); }
-.toggle input { display: none; }
+
+/* Чекбокс физически в потоке (фокусируемый), но визуально скрыт */
+.toggle input {
+  position: absolute; width: 1px; height: 1px;
+  opacity: 0; pointer-events: none;
+}
+
+.toggle input:focus-visible ~ .toggle__track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 .toggle__track {
-  position: relative; width: 34px; height: 18px;
-  background: var(--border); border-radius: 9px; flex-shrink: 0;
+  position: relative; width: 34px; height: 18px; flex-shrink: 0;
+  background: var(--border); border-radius: 9px;
   transition: background 0.25s var(--ease);
 }
 
@@ -341,6 +365,9 @@ details[open] > .panel__title--toggle::before { transform: rotate(90deg); }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Опция, деактивированная логикой (например, конфлликт пересылок) */
+.toggle.is-disabled { opacity: 0.45; pointer-events: none; }
 
 /* BUTTONS */
 .actions { margin-bottom: 16px; }
@@ -436,6 +463,15 @@ details[open] > .panel__title--toggle::before { transform: rotate(90deg); }
   .result__actions .btn--sm { flex: 1; }
   .result__stats { grid-template-columns: 1fr 1fr; }
   .drop-zone { padding: 32px 16px; }
+}
+
+/* Уважение к системной настройке «меньше анимаций» */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* NOISE OVERLAY */

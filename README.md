@@ -3,125 +3,65 @@
 
 # Telegram Chat Minifier
 
-This tool is designed to solve a major problem when working with large Telegram chat archives: their huge size and unsuitability for AI analysis (e.g., for models like GPT, Claude, Llama).
+A local tool that turns bulky Telegram chat exports into a compact, LLM-friendly transcript: it strips metadata, collapses media spam into short tags, and keeps the dialogue readable for models like GPT, Claude, or Llama.
 
 ## The Problem
 
-A standard Telegram chat export in `.json` format contains a lot of redundant information, making it highly inefficient for feeding into language models:
+A standard Telegram JSON export is extremely inefficient to feed into a language model:
 
-- **Huge JSON Size:** Files can reach tens or hundreds of megabytes, which is impossible to load into the context window of most models.
-- **Excessive Noise:** A vast amount of metadata, formatting, message IDs, and unique timestamps for every message "eats up" precious space.
-- **High Token Cost:** A large number of unnecessary characters directly leads to increased token consumption, making analysis expensive or altogether impossible.
+- **Huge size** — tens or hundreds of megabytes, far beyond most context windows.
+- **Noise** — IDs, entities, timestamps, and media metadata for every message.
+- **Token cost** — all that redundancy is paid for on every request.
 
 ## ✨ Features
 
-`Telegram Chat Minifier` solves these problems by allowing you to:
+- **Filter by participants** — select one or several people by their `from_id` (same-named people stay distinct).
+- **Time window** — take a person's messages plus the surrounding context from everyone else.
+- **Reply chains** — keep a person's messages together with the replies to them and the messages they replied to.
+- **Date range** — interpreted in the chat owner's timezone, stored inside the export itself (output does not depend on the machine that runs the tool).
+- **Compression presets** — Safe / Balanced / Aggressive, plus fine-tuned toggles:
+  - links → `[URL]`, albums → `[фото x4]`, identical repeats → `да (x3)`;
+  - media replaced by short tags with durations (`[голос 0:45]`);
+  - polls, locations, contacts, and service events (calls, joins) are never silently lost;
+  - optional anonymization: stable per-person aliases `User1, User2…`, forwards included.
+- **Honest statistics** — compression is measured against the real size of the source file, not a made-up constant.
+- **Privacy** — zero network requests: no CDNs, no fonts, no analytics. Opens straight from `file://`.
 
-- **Filter by User(s):** Select one or more participants to extract only relevant dialogues.
-- **Set a Time Window:** Get not only the messages of the selected people but also the context—responses from other participants within a few minutes before and after.
-- **Maximize Text Compression:**
-  - All unnecessary characters, JSON markup, and metadata are removed.
-  - Identical consecutive messages and media spam are grouped with a counter (e.g., `[photo x5]`).
-  - Author names are not repeated in a series of messages for better readability.
-- **Preserve the Essentials:** Media files are replaced with concise tags (`[photo]`, `[video]`, `[voice message]`), and links can be hidden.
-- **Ensure Privacy:** All processing happens locally in your browser. Your data is never sent anywhere.
-
-## ⚡️ Savings Example: Before & After
-
-To understand the scale of optimization, let's look at a small, fictional chat snippet.
-
-### Original Snippet (Before)
-
-```json
-  {
-   "id": 1001,
-   "type": "message",
-   "date": "2024-05-10T10:30:00",
-   "date_unixtime": "1715326200",
-   "from": "Alex",
-   "from_id": "user123456789",
-   "text": "Are you there?",
-   "text_entities": [
-    {
-     "type": "plain",
-     "text": "Are you there?"
-    }
-   ]
-  },
-  {
-   "id": 1002,
-   "type": "message",
-   "date": "2024-05-10T10:31:15",
-   "date_unixtime": "1715326275",
-   "from": "Maria",
-   "from_id": "user987654321",
-   "reply_to_message_id": 1001,
-   "file": "(File not included...)",
-   "media_type": "voice_message",
-   "mime_type": "audio/ogg",
-   "duration_seconds": 3,
-   "text": "",
-   "text_entities": []
-  },
-  {
-   "id": 1003,
-   "type": "message",
-   "date": "2024-05-10T10:31:25",
-   "date_unixtime": "1715326285",
-   "from": "Maria",
-   "from_id": "user987654321",
-   "file": "(File not included...)",
-   "media_type": "voice_message",
-   "mime_type": "audio/ogg",
-   "duration_seconds": 5,
-   "text": "",
-   "text_entities": []
-  },
-    {
-   "id": 1004,
-   "type": "message",
-   "date": "2024-05-10T10:32:00",
-   "date_unixtime": "1715326320",
-   "from": "Alex",
-   "from_id": "user123456789",
-   "text": "Got it",
-   "text_entities": [
-    {
-     "type": "plain",
-     "text": "Got it"
-    }
-   ]
-  }
-```
-
-### Processed Result (After)
+## ⚡ Output Format
 
 ```text
-[10.05.24]
-Alex:Are you there?
-Maria:[voice message] (x2)
-Alex:Got it
+[2024-05-10]
+10:30 Алекс: Ты тут?
+10:31 Мария: > [голос 0:03]
+10:31   [голос 0:05]
+10:32 Алекс: Понял
 ```
 
-### Savings Analysis
-
-| Metric | Before | After | Savings |
-| :--- | :--- | :--- | :--- |
-| **Characters** | ~1250 | 59 | **~95.3%** |
-| **Tokens (approx.)** | ~280 | 14 | **~95.0%** |
-
-As you can see, even on a small segment, the savings exceed 90%. On a full 16 MB chat file, the result will be even more impressive, turning a useless archive for AI into a valuable, compact dataset for analysis.
+- `[YYYY-MM-DD]` — day header, days separated by a blank line.
+- `HH:MM Author: text` — the author is printed only when it changes (the double space marks continuation lines).
+- `>` — a reply; `[fwd Имя]` — a forwarded message; `[URL]` — a masked link.
+- Media tags: `[фото]`, `[видео 2:31]`, `[голос 0:45]`, `[кружок 1:02]`, `[gif]`, `[аудио: Исполнитель — Трек]`, `[файл: report.pdf]`, `[стикер]` / `[😂]`, `[опрос: вопрос]`, `[геометка: место]`, `[контакт: Имя]`.
+- If, after filtering, a single author remains, their name is omitted entirely.
 
 ## 🚀 How to Use
 
-1.  Download all project files (`index.html`, `css` and `js` folders).
-2.  Maintain the file structure: the `css` and `js` folders should be next to `index.html`.
-3.  Open the `index.html` file in any modern web browser (Google Chrome, Firefox, Edge).
-4.  Follow the on-screen instructions: select your JSON file, configure the settings, and process the data.
+1. Download the project files (`index.html`, `css/`, `js/`).
+2. Open `index.html` in any modern browser — no server or build step needed.
+3. Drop in a Telegram export (`result.json` or `result.json.txt`), pick a preset and scope, press **Сжать**.
+4. Copy the result or download it as a `.txt` file.
 
 ## 🔒 Privacy
 
-All file reading and processing operations happen **exclusively on your computer**, within your browser. Your data never leaves your machine and is not sent anywhere.
+All processing happens in your browser via a Web Worker. The page makes **no network requests at all** — even fonts are local. Your data never leaves your machine.
+
+## 🛠 Development
+
+```bash
+npm test                                  # unit tests (no dependencies, Node 16+)
+node test/core.test.mjs result.json       # smoke test on a real export
+```
+
+The entire compression logic lives in `js/core.js` as one environment-agnostic function (`tgminWorkerCore`) reused by the Web Worker, the UI, and the Node tests. See `CHANGELOG.md` for what changed in v2.0.
 
 </details>
 
@@ -129,122 +69,62 @@ All file reading and processing operations happen **exclusively on your computer
 
 # Telegram Chat Minifier
 
-Этот инструмент создан для решения главной проблемы при работе с большими архивами чатов Telegram: их огромный размер и непригодность для анализа с помощью ИИ (например, для моделей вроде GPT, Claude, Llama).
+Локальный инструмент, который превращает громоздкий экспорт чата Telegram в компактную расшифровку для анализа LLM: убирает метаданные, схлопывает медиа-спам в короткие теги и сохраняет диалог читаемым для моделей вроде GPT, Claude или Llama.
 
 ## Проблема
 
-Стандартный экспорт чата из Telegram в формате `.json` содержит много избыточной информации, что делает его крайне неэффективным для подачи в языковые модели:
+Стандартный JSON-экспорт Telegram крайне неэффективен для подачи в языковую модель:
 
-- **Огромный размер JSON:** Файлы могут достигать десятков и сотен мегабайт, что невозможно загрузить в контекстное окно большинства моделей.
-- **Лишняя информация (шум):** Множество метаданных, форматирование, ID сообщений и уникальные метки времени для каждого сообщения — все это "съедает" драгоценное место.
-- **Высокая стоимость токенов:** Большое количество ненужных символов напрямую ведет к увеличению расхода токенов, делая анализ дорогим или вовсе невозможным.
+- **Огромный размер** — десятки и сотни мегабайт, far за пределами контекстного окна большинства моделей.
+- **Шум** — ID, сущности, дублирующиеся метки времени и метаданные медиа у каждого сообщения.
+- **Стоимость токенов** — за всю эту избыточность приходится платить в каждом запросе.
 
 ## ✨ Возможности
 
-`Telegram Chat Minifier` решает эти проблемы, позволяя вам:
+- **Фильтр по участникам** — выбор одного или нескольких людей по `from_id` (однофамильцы и тёзки не сливаются в одного участника).
+- **Временное окно** — сообщения выбранных людей плюс контекст от всех остальных вокруг них.
+- **Reply-цепочки** — сообщения человека вместе с ответами на них и с теми сообщениями, на которые он отвечал.
+- **Диапазон дат** — трактуется в часовом поясе владельца экспорта, который хранится в самом файле (вывод не зависит от машины, где запущен инструмент).
+- **Пресеты сжатия** — Бережный / Баланс / Агрессивный, плюс тонкая настройка:
+  - ссылки → `[URL]`, альбомы → `[фото x4]`, одинаковые повторы → `да (x3)`;
+  - медиа заменяется короткими тегами с длительностью (`[голос 0:45]`);
+  - опросы, геометки, контакты и сервисные события (звонки, вход/выход) не теряются молча;
+  - опциональная анонимизация: стабильные псевдонимы на человека `User1, User2…`, включая имена из пересылок.
+- **Честная статистика** — сжатие считается от реального размера исходного файла, а не от выдуманной константы.
+- **Приватность** — ноль сетевых запросов: ни CDN, ни шрифтов, ни аналитики. Открывается прямо с `file://`.
 
-- **Фильтровать по пользователям:** Выбирайте одного или нескольких участников, чтобы извлечь только релевантные диалоги.
-- **Устанавливать временное окно:** Получайте не только сообщения выбранных людей, но и контекст — ответы других участников за несколько минут до и после.
-- **Максимально сжимать текст:**
-  - Удаляются все лишние символы, JSON-разметка и метаданные.
-  - Одинаковые сообщения и медиа-спам группируются с указанием количества (например, `[фото x5]`).
-  - Имена авторов в сериях сообщений не повторяются.
-- **Сохранять суть:** Медиафайлы заменяются на лаконичные теги (`[фото]`, `[видео]`, `[голосовое сообщение]`), а ссылки можно скрыть.
-- **Обеспечивать приватность:** Вся обработка происходит локально в вашем браузере. Ваши данные никуда не отправляются.
-
-## ⚡️ Пример экономии: До и После
-
-Чтобы понять масштаб оптимизации, давайте посмотрим на небольшой фрагмент вымышленного чата.
-
-### Исходный фрагмент (До)
-
-```json
-  {
-   "id": 1001,
-   "type": "message",
-   "date": "2024-05-10T10:30:00",
-   "date_unixtime": "1715326200",
-   "from": "Алекс",
-   "from_id": "user123456789",
-   "text": "Ты тут?",
-   "text_entities": [
-    {
-     "type": "plain",
-     "text": "Ты тут?"
-    }
-   ]
-  },
-  {
-   "id": 1002,
-   "type": "message",
-   "date": "2024-05-10T10:31:15",
-   "date_unixtime": "1715326275",
-   "from": "Мария",
-   "from_id": "user987654321",
-   "reply_to_message_id": 1001,
-   "file": "(File not included...)",
-   "media_type": "voice_message",
-   "mime_type": "audio/ogg",
-   "duration_seconds": 3,
-   "text": "",
-   "text_entities": []
-  },
-  {
-   "id": 1003,
-   "type": "message",
-   "date": "2024-05-10T10:31:25",
-   "date_unixtime": "1715326285",
-   "from": "Мария",
-   "from_id": "user987654321",
-   "file": "(File not included...)",
-   "media_type": "voice_message",
-   "mime_type": "audio/ogg",
-   "duration_seconds": 5,
-   "text": "",
-   "text_entities": []
-  },
-    {
-   "id": 1004,
-   "type": "message",
-   "date": "2024-05-10T10:32:00",
-   "date_unixtime": "1715326320",
-   "from": "Алекс",
-   "from_id": "user123456789",
-   "text": "Понял",
-   "text_entities": [
-    {
-     "type": "plain",
-     "text": "Понял"
-    }
-   ]
-  }
-```
-
-### Результат обработки (После)
+## ⚡ Формат вывода
 
 ```text
-[10.05.24]
-Алекс:Ты тут?
-Мария:[голосовое сообщение] (x2)
-Алекс:Понял
+[2024-05-10]
+10:30 Алекс: Ты тут?
+10:31 Мария: > [голос 0:03]
+10:31   [голос 0:05]
+10:32 Алекс: Понял
 ```
 
-### Анализ экономии
-
-| Метрика | До | После | Экономия |
-| :--- | :--- | :--- | :--- |
-| **Символы** | ~1250 | 63 | **~95.0%** |
-| **Токены (приблизительно)** | ~280 | 14 | **~95.0%** |
-
-Как видите, даже на небольшом отрезке экономия превышает 90%. На полном файле чата размером 16 МБ результат будет еще более впечатляющим, превращая бесполезный для ИИ архив в ценный, компактный датасет для анализа.
+- `[YYYY-MM-DD]` — заголовок дня, дни разделены пустой строкой.
+- `HH:MM Автор: текст` — автор печатается только при смене (двойной пробел отмечает продолжение серии).
+- `>` — ответ; `[fwd Имя]` — пересланное сообщение; `[URL]` — скрытая ссылка.
+- Теги медиа: `[фото]`, `[видео 2:31]`, `[голос 0:45]`, `[кружок 1:02]`, `[gif]`, `[аудио: Исполнитель — Трек]`, `[файл: report.pdf]`, `[стикер]` / `[😂]`, `[опрос: вопрос]`, `[геометка: место]`, `[контакт: Имя]`.
+- Если после фильтров остаётся один автор, его имя опускается целиком.
 
 ## 🚀 Как использовать
 
-1.  Скачайте все файлы проекта (`index.html`, папки `css` и `js`).
-2.  Сохраните структуру файлов: папки `css` и `js` должны находиться рядом с `index.html`.
-3.  Откройте файл `index.html` в любом современном веб-браузере (Google Chrome, Firefox, Edge).
-4.  Следуйте инструкциям на экране: выберите ваш JSON-файл, настройте параметры и обработайте данные.
+1. Скачайте файлы проекта (`index.html`, папки `css` и `js`).
+2. Откройте `index.html` в любом современном браузере — сервер и сборка не нужны.
+3. Перетащите экспорт Telegram (`result.json` или `result.json.txt`), выберите пресет и область выборки, нажмите **Сжать**.
+4. Скопируйте результат или скачайте его как `.txt`.
 
 ## 🔒 Приватность
 
-Все операции по чтению и обработке файла происходят **исключительно на вашем компьютере**, в вашем браузере. Ваши данные никогда не покидают ваш компьютер и никуда не отправляются.
+Вся обработка идёт в браузере, в Web Worker. Страница **не делает ни одного сетевого запроса** — даже шрифты локальные. Ваши данные не покидают компьютер.
+
+## 🛠 Разработка
+
+```bash
+npm test                                  # unit-тесты (без зависимостей, Node 16+)
+node test/core.test.mjs result.json       # smoke-тест на реальном экспорте
+```
+
+Вся логика сжатия живёт в `js/core.js` в одной не зависящей от окружения функции (`tgminWorkerCore`), которую переиспользуют Web Worker, интерфейс и Node-тесты. Список изменений v2.0 — в `CHANGELOG.md`.
